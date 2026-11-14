@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f97316"><title>Qoopza Food · Admin</title>
+  <style>
+    :root{font-family:Inter,system-ui,Arial,sans-serif;color:#172033;background:#f5f6fa}*{box-sizing:border-box}body{margin:0}.top{background:#f97316;color:white;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;gap:12px}.top h1{margin:0;font-size:22px}.top small{opacity:.9}.wrap{max-width:1100px;margin:26px auto;padding:0 16px}.panel{background:white;border:1px solid #e8eaf0;border-radius:16px;padding:22px;box-shadow:0 8px 28px #1b274010}.login{max-width:420px;margin:8vh auto}.field{display:block;width:100%;padding:13px;border:1px solid #d7dce5;border-radius:10px;margin:7px 0 16px;font:inherit}.btn{border:0;border-radius:10px;padding:11px 15px;background:#f97316;color:#fff;font-weight:700;cursor:pointer}.btn:disabled{opacity:.55;cursor:wait}.btn.gray{background:#e9edf4;color:#243047}.btn.red{background:#dc2626}.hidden{display:none!important}.muted{color:#687386}.error{color:#b91c1c;white-space:pre-wrap}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.stat{background:white;padding:16px;border:1px solid #e8eaf0;border-radius:13px}.stat b{display:block;font-size:24px;margin-top:5px}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:16px 0}.toolbar input,.toolbar select{padding:10px;border:1px solid #d7dce5;border-radius:9px;font:inherit}.orders{display:grid;gap:12px}.order{background:#fff;border:1px solid #e8eaf0;border-radius:14px;padding:16px}.orderhead{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.order h3{margin:0 0 6px}.tag{display:inline-block;background:#fff1e7;color:#a94408;padding:5px 9px;border-radius:20px;font-size:12px;font-weight:700}.details{color:#536074;line-height:1.6;margin:10px 0}.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.actions select{padding:9px;border:1px solid #d7dce5;border-radius:8px;font:inherit}.notice{padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;color:#9a3412;margin:12px 0}@media(max-width:650px){.stats{grid-template-columns:repeat(2,1fr)}.top{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body>
+<header class="top"><div><h1>🟠 Qoopza Food</h1><small>Secure Admin Dashboard</small></div><button id="logout" class="btn gray hidden">Log out</button></header>
+<main class="wrap">
+  <section id="loginBox" class="panel login">
+    <h2>Admin Login</h2><p class="muted">Sign in with your authorised admin email and password.</p>
+    <label for="email">Admin email</label><input class="field" id="email" type="email" autocomplete="username" placeholder="admin@example.com">
+    <label for="password">Password</label><input class="field" id="password" type="password" autocomplete="current-password" placeholder="Your password">
+    <button id="login" class="btn" style="width:100%">Sign in securely</button><p id="loginError" class="error" role="alert"></p>
+    <p class="muted" style="font-size:13px">Admin accounts must be created in Supabase by the project owner. There is no public sign-up on this page.</p>
+  </section>
+  <section id="dashboard" class="hidden">
+    <div class="orderhead"><div><h2 style="margin:0">Orders Dashboard</h2><p class="muted" style="margin:5px 0">Manage incoming orders and delivery progress.</p></div><button id="refresh" class="btn gray">↻ Refresh</button></div>
+    <div class="stats"><div class="stat">All orders<b id="allCount">0</b></div><div class="stat">New<b id="newCount">0</b></div><div class="stat">In delivery<b id="deliveryCount">0</b></div><div class="stat">Delivered<b id="doneCount">0</b></div></div>
+    <div class="toolbar"><input id="search" placeholder="Search name, phone or order ID" aria-label="Search orders"><select id="filter"><option value="all">All statuses</option><option>New</option><option>Confirmed</option><option>Preparing</option><option>Out for Delivery</option><option>Delivered</option><option>Cancelled</option></select></div>
+    <p id="message" class="muted" aria-live="polite"></p><div id="orders" class="orders"></div>
+  </section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// Public project URL and anon key belong here. NEVER put a service_role key in this file.
+const SUPABASE_URL = 'YOUR_SUPABASE_PROJECT_URL';
+const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = id => document.getElementById(id);
+let allOrders = [];
+const statuses = ['New','Confirmed','Preparing','Out for Delivery','Delivered','Cancelled'];
+function showError(el, text){ $(el).textContent = text || ''; }
+function safe(value){return String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function money(v){const n=Number(v||0);return '₹'+n.toFixed(2)}
+async function checkAdmin(session){
+  if(!session){$('loginBox').classList.remove('hidden');$('dashboard').classList.add('hidden');$('logout').classList.add('hidden');return;}
+  const {data,isError,error}=await client.rpc('is_admin');
+  if(error || data !== true){await client.auth.signOut();showError('loginError','This account is not authorised as a Qoopza admin.');return;}
+  $('loginBox').classList.add('hidden');$('dashboard').classList.remove('hidden');$('logout').classList.remove('hidden');await loadOrders();
+}
+async function loadOrders(){
+  $('message').textContent='Loading orders…';
+  const {data,error}=await client.from('orders').select('*').order('created_at',{ascending:false}).limit(200);
+  if(error){$('message').textContent='Could not load orders: '+error.message;return;}
+  allOrders=data||[];render();$('message').textContent=allOrders.length?'Showing latest '+allOrders.length+' orders.':'No orders found yet.';
+}
+function render(){
+  $('allCount').textContent=allOrders.length;$('newCount').textContent=allOrders.filter(o=>o.status==='New').length;
+  $('deliveryCount').textContent=allOrders.filter(o=>o.status==='Out for Delivery').length;$('doneCount').textContent=allOrders.filter(o=>o.status==='Delivered').length;
+  const q=$('search').value.toLowerCase(),f=$('filter').value;
+  const rows=allOrders.filter(o=>(f==='all'||o.status===f)&&[o.id,o.customer_name,o.phone].some(v=>String(v||'').toLowerCase().includes(q)));
+  $('orders').innerHTML=rows.map(o=>{
+    const items=Array.isArray(o.items)?o.items.map(i=>`${safe(i.name||i.title||'Item')} × ${safe(i.quantity||i.qty||1)}`).join(', '):safe(o.items||'');
+    return `<article class="order"><div class="orderhead"><div><h3>Order #${safe(String(o.id).slice(0,8))}</h3><span class="muted">${safe(new Date(o.created_at).toLocaleString())}</span></div><span class="tag">${safe(o.status||'New')}</span></div><div class="details"><b>${safe(o.customer_name||'Customer')}</b> · ${safe(o.phone||'No phone')}<br>${safe(o.address||'No delivery address')}<br><b>Items:</b> ${items||'Not provided'}<br><b>Total:</b> ${money(o.total)} · <b>Payment:</b> ${safe(o.payment_method||'Not specified')}</div><div class="actions"><label class="muted" for="status-${safe(o.id)}">Update status:</label><select id="status-${safe(o.id)}">${statuses.map(s=>`<option ${s===(o.status||'New')?'selected':''}>${s}</option>`).join('')}</select><button class="btn" data-save="${safe(o.id)}">Save status</button></div></article>`;
+  }).join('')||'<div class="panel muted">No matching orders.</div>';
+  document.querySelectorAll('[data-save]').forEach(btn=>btn.addEventListener('click',()=>updateStatus(btn.dataset.save)));
+}
+async function updateStatus(id){
+  const status=$('status-'+CSS.escape(id)).value;
+  const {error}=await client.from('orders').update({status}).eq('id',id);
+  if(error){$('message').textContent='Status update failed: '+error.message;return;}
+  $('message').textContent='Order status updated.';await loadOrders();
+}
+$('login').addEventListener('click',async()=>{
+  showError('loginError','');const email=$('email').value.trim(),password=$('password').value;
+  if(!email||!password){showError('loginError','Enter your admin email and password.');return;}
+  $('login').disabled=true;
+  const {data,error}=await client.auth.signInWithPassword({email,password});
+  $('login').disabled=false;
+  if(error){showError('loginError','Login failed. Check your details and try again.');return;}
+  await checkAdmin(data.session);
+});
+$('logout').addEventListener('click',async()=>{await client.auth.signOut();location.reload();});
+$('refresh').addEventListener('click',loadOrders);$('search').addEventListener('input',render);$('filter').addEventListener('change',render);
+client.auth.onAuthStateChange((_event,session)=>{if(session) checkAdmin(session);});
+(async()=>{if(SUPABASE_URL.startsWith('https://')&&SUPABASE_ANON_KEY!=='YOUR_SUPABASE_ANON_KEY'){const {data}=await client.auth.getSession();await checkAdmin(data.session);}})();
+</script>
+</body></html>
